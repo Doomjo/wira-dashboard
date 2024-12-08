@@ -18,7 +18,7 @@ func SetupRouter(db *sql.DB) http.Handler {
 
     // Setup CORS
     c := cors.New(cors.Options{
-        AllowedOrigins: []string{"http://localhost:8080"),
+        AllowedOrigins: []string{"http://localhost"),
         AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
         AllowedHeaders: []string{"Content-Type"},
     })
