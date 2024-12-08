@@ -16,4 +16,4 @@ Frontend:
 
 Please do the following:
 
-npm run dev
+npm run build
