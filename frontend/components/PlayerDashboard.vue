@@ -1,65 +1,92 @@
 <template>
-  <div class="container mx-auto px-4 py-8">
-    <!-- Search Bar -->
-    <div class="mb-6">
-      <input
-        v-model="searchQuery"
-        type="text"
-        placeholder="Search by username..."
-        class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500"
-        @input="handleSearch"
-      />
-    </div>
-
-    <!-- Players Table -->
-    <div class="overflow-x-auto bg-white rounded-lg shadow">
-      <table class="min-w-full table-auto">
-        <thead class="bg-gray-100">
-          <tr>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rank</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Character Class</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Score</th>
-          </tr>
-        </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
-          <tr v-for="(player, index) in paginatedPlayers" :key="player.char_id" class="hover:bg-gray-50">
-            <td class="px-6 py-4 whitespace-nowrap">{{ calculateRank(index) }}</td>
-            <td class="px-6 py-4 whitespace-nowrap">{{ player.username }}</td>
-            <td class="px-6 py-4 whitespace-nowrap">{{ player.class_name }}</td>
-            <td class="px-6 py-4 whitespace-nowrap">{{ player.reward_score }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Pagination -->
-    <div class="mt-4 flex justify-between items-center">
-      <div class="text-sm text-gray-700">
-        Showing {{ paginationStart + 1 }} to {{ paginationEnd }} of {{ filteredPlayers.length }} entries
+  <div class="dashboard-container">
+    <header class="dashboard-header">
+      <h1 class="dashboard-title">WIRA Ranking Dashboard</h1>
+    </header>
+    
+    <main class="dashboard-main">
+      <!-- Search Bar -->
+      <div class="search-container">
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="Search players..."
+          class="search-input"
+          @input="handleSearch"
+        />
       </div>
-      <div class="flex space-x-2">
-        <button
-          @click="currentPage--"
-          :disabled="currentPage === 1"
-          class="px-4 py-2 border rounded-lg disabled:opacity-50"
-        >
-          Previous
-        </button>
-        <button
-          @click="currentPage++"
-          :disabled="currentPage >= totalPages"
-          class="px-4 py-2 border rounded-lg disabled:opacity-50"
-        >
-          Next
-        </button>
+
+      <!-- Loading State -->
+      <div v-if="loading" class="loading-spinner">
+        Loading...
       </div>
-    </div>
+
+      <!-- Error State -->
+      <div v-else-if="error" class="error-message">
+        {{ error }}
+      </div>
+
+      <!-- Players Table -->
+      <div v-else class="table-container">
+        <table class="players-table">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Username</th>
+              <th>Class</th>
+              <th>Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(player, index) in players" :key="player.char_id">
+              <td>
+                <span :class="['rank-badge', index < 3 ? 'top-rank' : '']">
+                  {{ calculateRank(index) }}
+                </span>
+              </td>
+              <td>{{ player.username }}</td>
+              <td>
+                <span class="class-badge">
+                  Class {{ player.class_id }}
+                </span>
+              </td>
+              <td class="score">{{ player.reward_score.toLocaleString() }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Pagination -->
+        <div class="pagination">
+          <div class="pagination-info">
+            Showing {{ ((currentPage - 1) * itemsPerPage) + 1 }} to 
+            {{ Math.min(currentPage * itemsPerPage, totalCount) }} of 
+            {{ totalCount }} entries
+          </div>
+          <div class="pagination-buttons">
+            <button
+              @click="currentPage--"
+              :disabled="currentPage === 1"
+              class="pagination-button"
+            >
+              Previous
+            </button>
+            <button
+              @click="currentPage++"
+              :disabled="currentPage >= totalPages"
+              class="pagination-button"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
   </div>
 </template>
 
 <script>
 import axios from 'axios';
+import { debounce } from 'lodash';
 
 export default {
   name: 'PlayerDashboard',
@@ -68,40 +95,35 @@ export default {
       players: [],
       searchQuery: '',
       currentPage: 1,
+      totalPages: 1,
+      totalCount: 0,
       itemsPerPage: 10,
       loading: false,
       error: null
     };
   },
-  computed: {
-    filteredPlayers() {
-      if (!this.searchQuery) return this.players;
-      const query = this.searchQuery.toLowerCase();
-      return this.players.filter(player => 
-        player.username.toLowerCase().includes(query)
-      );
-    },
-    paginatedPlayers() {
-      const start = (this.currentPage - 1) * this.itemsPerPage;
-      const end = start + this.itemsPerPage;
-      return this.filteredPlayers.slice(start, end);
-    },
-    totalPages() {
-      return Math.ceil(this.filteredPlayers.length / this.itemsPerPage);
-    },
-    paginationStart() {
-      return (this.currentPage - 1) * this.itemsPerPage;
-    },
-    paginationEnd() {
-      return Math.min(this.paginationStart + this.itemsPerPage, this.filteredPlayers.length);
+  watch: {
+    currentPage() {
+      this.fetchPlayers();
     }
   },
   methods: {
     async fetchPlayers() {
       try {
         this.loading = true;
-        const response = await axios.get('http://localhost:8080/api/players');
-        this.players = response.data.sort((a, b) => b.reward_score - a.reward_score);
+        this.error = null;
+        
+        const response = await axios.get('http://localhost:8080/api/players', {
+          params: {
+            page: this.currentPage,
+            limit: this.itemsPerPage,
+            search: this.searchQuery
+          }
+        });
+
+        this.players = response.data.players;
+        this.totalCount = response.data.total_count;
+        this.totalPages = response.data.total_pages;
       } catch (err) {
         this.error = 'Error fetching players data';
         console.error(err);
@@ -109,11 +131,12 @@ export default {
         this.loading = false;
       }
     },
-    handleSearch() {
-      this.currentPage = 1; // Reset to first page when searching
-    },
+    handleSearch: debounce(function() {
+      this.currentPage = 1;
+      this.fetchPlayers();
+    }, 300),
     calculateRank(index) {
-      return this.paginationStart + index + 1;
+      return ((this.currentPage - 1) * this.itemsPerPage) + index + 1;
     }
   },
   created() {
@@ -123,19 +146,151 @@ export default {
 </script>
 
 <style scoped>
-@media (max-width: 640px) {
-  table {
-    display: block;
-    overflow-x: auto;
-    white-space: nowrap;
-  }
-  
-  .container {
-    padding: 1rem;
-  }
-  
-  th, td {
-    padding: 0.5rem;
-  }
+.dashboard-container {
+  min-height: 100vh;
+  background-color: white;
+}
+
+.dashboard-header {
+  background-color: #f0f9ff;
+  padding: 1rem 0;
+  text-align: center;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.dashboard-title {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #2563eb;
+}
+
+.dashboard-main {
+  max-width: 95%;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+.search-container {
+  max-width: 32rem;
+  margin: 2rem auto;
+}
+
+.search-input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  font-size: 1rem;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px solid #3b82f6;
+}
+
+.table-container {
+  background-color: white;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  overflow: hidden;
+}
+
+.players-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.players-table th,
+.players-table td {
+  padding: 1rem 1.5rem;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.players-table th {
+  background-color: #f9fafb;
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.players-table tr:hover {
+  background-color: #f0f9ff;
+}
+
+.rank-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  background-color: #f3f4f6;
+  color: #4b5563;
+}
+
+.top-rank {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.class-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  background-color: #d1fae5;
+  color: #065f46;
+  font-size: 0.875rem;
+}
+
+.score {
+  font-weight: 500;
+}
+
+.pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.pagination-info {
+  font-size: 0.875rem;
+  color: #4b5563;
+}
+
+.pagination-buttons {
+  display: flex;
+  gap: 2rem;
+}
+
+.pagination-button {
+  padding: 0.5rem 1.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 9999px;
+  background-color: white;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.pagination-button:hover:not(:disabled) {
+  background-color: #f9fafb;
+}
+
+.pagination-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.loading-spinner {
+  text-align: center;
+  padding: 3rem 0;
+  color: #3b82f6;
+}
+
+.error-message {
+  text-align: center;
+  padding: 1rem;
+  color: #ef4444;
 }
 </style>
